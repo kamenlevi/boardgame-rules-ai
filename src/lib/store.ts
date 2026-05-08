@@ -1,10 +1,10 @@
 // Client-side store using localStorage for demo (replace with Supabase in production)
-import { UserGame, BGGGame, Rule, UploadedPage, UserProfile } from "@/types";
+import { UserGame, BGGGame, Rule, UploadedPage, UserProfile, AIConfig, AIProvider } from "@/types";
 
 const KEYS = {
   profile: "bga_profile",
   games: "bga_games",
-  anthropicKey: "bga_anthropic_key",
+  aiConfig: "bga_ai_config",
 };
 
 export function getProfile(): UserProfile {
@@ -73,13 +73,14 @@ export function saveExtractedRules(bggId: string, rules: Rule[]) {
   localStorage.setItem(KEYS.games, JSON.stringify(games));
 }
 
-export function getAnthropicKey(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem(KEYS.anthropicKey) ?? "";
+export function getAIConfig(): AIConfig {
+  if (typeof window === "undefined") return { provider: "anthropic", apiKey: "" };
+  const raw = localStorage.getItem(KEYS.aiConfig);
+  return raw ? JSON.parse(raw) : { provider: "anthropic", apiKey: "" };
 }
 
-export function saveAnthropicKey(key: string) {
-  localStorage.setItem(KEYS.anthropicKey, key);
+export function saveAIConfig(config: AIConfig) {
+  localStorage.setItem(KEYS.aiConfig, JSON.stringify(config));
 }
 
 export function importBGGCollection(bggGames: BGGGame[]) {

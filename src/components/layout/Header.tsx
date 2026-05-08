@@ -1,14 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { BookOpen, Settings, Search, Plus, Loader2, KeyRound, X } from "lucide-react";
+import { BookOpen, Settings, Search, Plus, Loader2, Eye, EyeOff, X, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getProfile, saveProfile, getAnthropicKey, saveAnthropicKey, saveUserGame } from "@/lib/store";
-import { bggFetchCollection, bggSearch } from "@/lib/bgg-client";
-import { BGGGame } from "@/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { getProfile, saveProfile, getAIConfig, saveAIConfig, saveUserGame } from "@/lib/store";
+import { bggFetchCollection, bggSearch, BGGAuthError } from "@/lib/bgg-client";
+import { BGGGame, AIProvider } from "@/types";
 import { toast } from "sonner";
 import Image from "next/image";
 
@@ -17,15 +18,31 @@ interface HeaderProps {
   onLibraryChanged?: () => void;
 }
 
+const OPENROUTER_MODELS = [
+  { id: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet (via OpenRouter)" },
+  { id: "anthropic/claude-3.5-haiku", label: "Claude Haiku — faster/cheaper" },
+  { id: "openai/gpt-4o", label: "GPT-4o" },
+  { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
+  { id: "meta-llama/llama-3.2-90b-vision-instruct", label: "Llama 3.2 90B Vision" },
+];
+
 export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [bggUsername, setBggUsername] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [profile, setProfile] = useState(getProfile());
+  const [profile, setProfile] = useState(getProfile);
+  const [aiConfig, setAIConfig] = useState(getAIConfig);
 
-  // Game search state
+  // BGG state
+  const [bggUsername, setBggUsername] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [bggError, setBggError] = useState("");
+
+  // AI key state
+  const [keyInput, setKeyInput] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>("anthropic");
+  const [selectedModel, setSelectedModel] = useState(OPENROUTER_MODELS[0].id);
+
+  // Add game search state
   const [addGameOpen, setAddGameOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<BGGGame[]>([]);
@@ -33,14 +50,22 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const p = getProfile();
-    setProfile(p);
-    setBggUsername(p.bggUsername ?? "");
-    setApiKey(getAnthropicKey());
+    if (settingsOpen) {
+      const p = getProfile();
+      const ai = getAIConfig();
+      setProfile(p);
+      setAIConfig(ai);
+      setBggUsername(p.bggUsername ?? "");
+      setKeyInput(ai.apiKey ?? "");
+      setSelectedProvider(ai.provider ?? "anthropic");
+      setSelectedModel(ai.model ?? OPENROUTER_MODELS[0].id);
+      setBggError("");
+    }
   }, [settingsOpen]);
 
   async function connectBGG() {
     if (!bggUsername.trim()) return;
+    setBggError("");
     setImporting(true);
     try {
       const games = await bggFetchCollection(bggUsername.trim());
@@ -52,26 +77,34 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
       setSettingsOpen(false);
       onLibraryChanged?.();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to connect to BGG");
+      const msg = err instanceof Error ? err.message : "Failed to connect to BGG";
+      setBggError(msg);
     } finally {
       setImporting(false);
     }
   }
 
   function saveKey() {
-    if (!apiKey.trim()) return;
-    saveAnthropicKey(apiKey.trim());
-    const updated = saveProfile({ hasAnthropicKey: true });
+    const config = {
+      provider: selectedProvider,
+      apiKey: keyInput.trim(),
+      model: selectedProvider === "openrouter" ? selectedModel : undefined,
+    };
+    saveAIConfig(config);
+    setAIConfig(config);
+    const updated = saveProfile({ aiProvider: selectedProvider, hasAIKey: !!keyInput.trim() });
     setProfile(updated);
-    toast.success("API key saved");
+    toast.success("AI settings saved");
   }
 
   function removeKey() {
-    saveAnthropicKey("");
-    const updated = saveProfile({ hasAnthropicKey: false });
+    const config = { provider: selectedProvider, apiKey: "" };
+    saveAIConfig(config);
+    setAIConfig(config);
+    setKeyInput("");
+    const updated = saveProfile({ hasAIKey: false });
     setProfile(updated);
-    setApiKey("");
-    toast.success("API key removed");
+    toast.success("Key removed");
   }
 
   function handleGameSearch(q: string) {
@@ -84,17 +117,23 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
         const results = await bggSearch(q);
         setSearchResults(results);
       } catch {
-        toast.error("Search failed");
+        toast.error("Search failed — BGG may be slow, try again");
       } finally {
         setSearching(false);
       }
-    }, 500);
+    }, 600);
   }
 
   function addGame(game: BGGGame) {
     saveUserGame(game, { bggOwned: false });
     toast.success(`Added ${game.name}`);
     onLibraryChanged?.();
+  }
+
+  function closeAddGame() {
+    setAddGameOpen(false);
+    setSearchQuery("");
+    setSearchResults([]);
   }
 
   return (
@@ -138,21 +177,26 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
           </DialogHeader>
+
           <Tabs defaultValue="bgg">
             <TabsList className="w-full">
               <TabsTrigger value="bgg" className="flex-1">BGG Account</TabsTrigger>
-              <TabsTrigger value="api" className="flex-1">API Key</TabsTrigger>
+              <TabsTrigger value="ai" className="flex-1">AI Provider</TabsTrigger>
             </TabsList>
 
+            {/* BGG Tab */}
             <TabsContent value="bgg" className="space-y-3 mt-4">
               <p className="text-sm text-muted-foreground">
-                Enter your BoardGameGeek username to import your owned game collection.
+                Enter your BoardGameGeek username to import your owned collection.
               </p>
               <div className="flex gap-2">
                 <Input
                   placeholder="BGG username"
                   value={bggUsername}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBggUsername(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    setBggUsername(e.target.value);
+                    setBggError("");
+                  }}
                   onKeyDown={(e: React.KeyboardEvent) => e.key === "Enter" && connectBGG()}
                   disabled={importing}
                 />
@@ -160,50 +204,113 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
                   {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : profile.bggConnected ? "Re-sync" : "Connect"}
                 </Button>
               </div>
-              {profile.bggConnected && (
+
+              {bggError && (
+                <div className="flex gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-xs">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div className="whitespace-pre-line">{bggError}</div>
+                </div>
+              )}
+
+              {!bggError && profile.bggConnected && (
                 <p className="text-xs text-green-600">
                   ✓ Connected as <strong>{profile.bggUsername}</strong>
                 </p>
               )}
+
+              <div className="text-xs text-muted-foreground space-y-1 pt-1 border-t">
+                <p className="font-medium">Collection must be public:</p>
+                <p>BGG Profile → Settings → Privacy → Collection → Everyone</p>
+              </div>
             </TabsContent>
 
-            <TabsContent value="api" className="space-y-3 mt-4">
-              <p className="text-sm text-muted-foreground">
-                Add your Anthropic API key to enable rule extraction and Q&amp;A. The key is stored only in your browser.
-              </p>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Input
-                    type={showApiKey ? "text" : "password"}
-                    placeholder="sk-ant-..."
-                    value={apiKey}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setApiKey(e.target.value)}
-                    onKeyDown={(e: React.KeyboardEvent) => e.key === "Enter" && saveKey()}
-                    className="pr-8"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            {/* AI Provider Tab */}
+            <TabsContent value="ai" className="space-y-4 mt-4">
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">Provider</label>
+                <Select
+                  value={selectedProvider}
+                  onValueChange={(v: string | null) => setSelectedProvider((v ?? "anthropic") as AIProvider)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="anthropic">
+                      Anthropic (Claude)
+                    </SelectItem>
+                    <SelectItem value="openrouter">
+                      OpenRouter (Multi-model)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {selectedProvider === "openrouter" && (
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">Model</label>
+                  <Select
+                    value={selectedModel}
+                    onValueChange={(v: string | null) => setSelectedModel(v ?? OPENROUTER_MODELS[0].id)}
                   >
-                    <KeyRound className="h-4 w-4" />
-                  </button>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {OPENROUTER_MODELS.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Button onClick={saveKey} disabled={!apiKey.trim()}>Save</Button>
-                {profile.hasAnthropicKey && (
-                  <Button variant="ghost" size="icon" onClick={removeKey}>
-                    <X className="h-4 w-4" />
-                  </Button>
+              )}
+
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">
+                  {selectedProvider === "anthropic" ? "Anthropic API Key" : "OpenRouter API Key"}
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      type={showKey ? "text" : "password"}
+                      placeholder={selectedProvider === "anthropic" ? "sk-ant-..." : "sk-or-..."}
+                      value={keyInput}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKeyInput(e.target.value)}
+                      onKeyDown={(e: React.KeyboardEvent) => e.key === "Enter" && saveKey()}
+                      className="pr-9"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKey(!showKey)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <Button onClick={saveKey}>Save</Button>
+                  {profile.hasAIKey && (
+                    <Button variant="ghost" size="icon" onClick={removeKey}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+
+                {profile.hasAIKey && aiConfig.provider && (
+                  <p className="text-xs text-green-600 mt-1.5">
+                    ✓ {aiConfig.provider === "anthropic" ? "Anthropic" : "OpenRouter"} key set
+                    {aiConfig.model ? ` · ${aiConfig.model.split("/").pop()}` : ""}
+                  </p>
                 )}
               </div>
-              {profile.hasAnthropicKey && (
-                <p className="text-xs text-green-600">✓ API key is set</p>
-              )}
+
               <p className="text-xs text-muted-foreground">
-                Get your key at{" "}
-                <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="underline">
-                  console.anthropic.com
-                </a>
+                {selectedProvider === "anthropic" ? (
+                  <>Get your key at{" "}<a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="underline">console.anthropic.com</a></>
+                ) : (
+                  <>Get your key at{" "}<a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="underline">openrouter.ai/keys</a>. Supports Claude, GPT-4o, Gemini, Llama and more.</>
+                )}
               </p>
             </TabsContent>
           </Tabs>
@@ -211,7 +318,7 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
       </Dialog>
 
       {/* Add Game Dialog */}
-      <Dialog open={addGameOpen} onOpenChange={(open) => { setAddGameOpen(open); if (!open) { setSearchQuery(""); setSearchResults([]); } }}>
+      <Dialog open={addGameOpen} onOpenChange={(open) => { if (!open) closeAddGame(); else setAddGameOpen(true); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Add a Game</DialogTitle>
@@ -240,7 +347,7 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
                 {searchResults.map((game) => (
                   <button
                     key={game.id}
-                    onClick={() => { addGame(game); setAddGameOpen(false); setSearchQuery(""); setSearchResults([]); }}
+                    onClick={() => { addGame(game); closeAddGame(); }}
                     className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-muted text-left transition-colors"
                   >
                     {game.thumbnail ? (

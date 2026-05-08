@@ -1,124 +1,173 @@
 /**
- * Client-side BGG API calls. Must run in the browser — BGG blocks server-side
- * requests from datacenter IPs but allows CORS * for browser requests.
+ * Client-side BGG XML API calls.
+ *
+ * BGG's XML API is blocked from server/datacenter IPs by Cloudflare bot detection,
+ * but allows CORS (access-control-allow-origin: *) for real browsers.
+ * These functions MUST run in the browser — never call them server-side.
+ *
+ * For BGG collection to work, the user's collection must be set to PUBLIC on BGG:
+ * boardgamegeek.com → Profile → Settings → Privacy → make collection public.
  */
+
 import { BGGGame } from "@/types";
 
-const BGG_API = "https://boardgamegeek.com/xmlapi2";
+const BGG_XML = "https://boardgamegeek.com/xmlapi2";
 
-function getAllByTag(parent: Element | Document, tagName: string): Element[] {
-  const list = parent.getElementsByTagName(tagName);
-  const result: Element[] = [];
-  for (let i = 0; i < list.length; i++) result.push(list[i] as Element);
-  return result;
+function parseXML(xml: string): Document {
+  return new DOMParser().parseFromString(xml, "text/xml");
 }
 
-function getElementText(parent: Element | Document, tagName: string): string {
-  return parent.getElementsByTagName(tagName)[0]?.textContent?.trim() ?? "";
+function tagText(doc: Document | Element, tag: string): string {
+  return doc.getElementsByTagName(tag)[0]?.textContent?.trim() ?? "";
 }
 
-async function fetchXML(url: string, retries = 3): Promise<Document> {
+function allByTag(doc: Document | Element, tag: string): Element[] {
+  const list = doc.getElementsByTagName(tag);
+  return Array.from({ length: list.length }, (_, i) => list[i] as Element);
+}
+
+async function bggFetch(url: string, retries = 4): Promise<Document> {
   for (let attempt = 0; attempt < retries; attempt++) {
     const res = await fetch(url);
 
     if (res.status === 202) {
-      // BGG queues the request — wait and retry
-      await new Promise((r) => setTimeout(r, 2000 + attempt * 1000));
+      // BGG queues large collection requests — wait and retry
+      await new Promise((r) => setTimeout(r, 2500 + attempt * 1500));
       continue;
     }
 
-    if (!res.ok) throw new Error(`BGG returned ${res.status}`);
+    if (res.status === 401) {
+      throw new BGGAuthError(
+        "BGG returned 401 — your collection must be set to Public.\n" +
+          "Go to boardgamegeek.com → top-right menu → Settings → Privacy → Collection: Everyone."
+      );
+    }
+
+    if (!res.ok) {
+      throw new Error(`BGG API error ${res.status}. Try again in a moment.`);
+    }
 
     const xml = await res.text();
-    return new DOMParser().parseFromString(xml, "text/xml");
+    const doc = parseXML(xml);
+
+    // BGG sometimes returns an error message inside the XML
+    const errorEl = doc.getElementsByTagName("error")[0];
+    if (errorEl) {
+      const msg = tagText(errorEl, "message");
+      if (msg.toLowerCase().includes("invalid username")) {
+        throw new Error(`BGG username "${url.match(/username=([^&]+)/)?.[1]}" not found.`);
+      }
+      throw new Error(`BGG error: ${msg}`);
+    }
+
+    return doc;
   }
-  throw new Error("BGG request timed out after retries");
+  throw new Error("BGG request timed out. BGG may be slow — try again.");
+}
+
+export class BGGAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BGGAuthError";
+  }
 }
 
 export async function bggFetchCollection(username: string): Promise<BGGGame[]> {
-  const url = `${BGG_API}/collection?username=${encodeURIComponent(username)}&own=1&stats=1&excludesubtype=boardgameexpansion`;
-  const doc = await fetchXML(url);
+  const url = `${BGG_XML}/collection?username=${encodeURIComponent(username)}&own=1&stats=1&excludesubtype=boardgameexpansion`;
+  const doc = await bggFetch(url);
 
-  const error = getElementText(doc, "error");
-  if (error) throw new Error(error);
-
-  const items = getAllByTag(doc, "item");
+  const items = allByTag(doc, "item");
   if (!items.length) return [];
 
-  // Collection items don't have full detail — batch fetch them
-  const ids = items.map((i) => i.getAttribute("objectid")).filter(Boolean).join(",");
-  return bggFetchThings(ids);
+  // Batch fetch full game details (stats, weight, etc.) for all collected games
+  const ids = items
+    .map((i) => i.getAttribute("objectid"))
+    .filter(Boolean)
+    .join(",");
+
+  return bggFetchByIds(ids);
 }
 
-export async function bggFetchThings(ids: string): Promise<BGGGame[]> {
-  const url = `${BGG_API}/thing?id=${ids}&stats=1`;
-  const doc = await fetchXML(url);
-  return getAllByTag(doc, "item").map(parseBGGThing);
+export async function bggFetchByIds(ids: string): Promise<BGGGame[]> {
+  const url = `${BGG_XML}/thing?id=${ids}&stats=1`;
+  const doc = await bggFetch(url);
+  return allByTag(doc, "item").map(parseThing);
 }
 
 export async function bggFetchGame(id: string): Promise<BGGGame> {
-  const games = await bggFetchThings(id);
-  if (!games.length) throw new Error("Game not found");
+  const games = await bggFetchByIds(id);
+  if (!games.length) throw new Error("Game not found on BGG");
   return games[0];
 }
 
 export async function bggSearch(query: string): Promise<BGGGame[]> {
-  const searchUrl = `${BGG_API}/search?query=${encodeURIComponent(query)}&type=boardgame`;
-  const doc = await fetchXML(searchUrl);
-  const items = getAllByTag(doc, "item").slice(0, 15);
+  const url = `${BGG_XML}/search?query=${encodeURIComponent(query)}&type=boardgame`;
+  const doc = await bggFetch(url);
+  const items = allByTag(doc, "item").slice(0, 15);
   if (!items.length) return [];
 
-  const ids = items.map((i) => i.getAttribute("id")).filter(Boolean).join(",");
-  return bggFetchThings(ids);
+  const ids = items
+    .map((i) => i.getAttribute("id"))
+    .filter(Boolean)
+    .join(",");
+  return bggFetchByIds(ids);
 }
 
-export async function bggFetchRulebookUrl(gameId: string): Promise<string | null> {
-  // BGG hosts rulebook files in the game's files section
-  const url = `${BGG_API}/thing?id=${gameId}&versions=1`;
-  const doc = await fetchXML(url);
-  const description = getElementText(doc, "description");
-  const match = description.match(/https?:\/\/[^\s"<>]+\.pdf/i);
-  return match ? match[0] : null;
+function fixUrl(url: string): string {
+  if (!url) return "";
+  return url.startsWith("//") ? `https:${url}` : url;
 }
 
-function parseBGGThing(item: Element): BGGGame {
-  const nameEls = getAllByTag(item, "name");
+function parseThing(item: Element): BGGGame {
+  const nameEls = allByTag(item, "name");
   const primaryName = nameEls.find((n) => n.getAttribute("type") === "primary");
 
-  const categories = getAllByTag(item, "link")
+  const categories = allByTag(item, "link")
     .filter((l) => l.getAttribute("type") === "boardgamecategory")
     .map((l) => l.getAttribute("value") ?? "");
 
-  const mechanics = getAllByTag(item, "link")
+  const mechanics = allByTag(item, "link")
     .filter((l) => l.getAttribute("type") === "boardgamemechanic")
     .map((l) => l.getAttribute("value") ?? "");
 
-  const ratingsEl = getAllByTag(item, "ratings")[0];
+  const ratingsEl = allByTag(item, "ratings")[0];
   const avgRating = ratingsEl
-    ? getAllByTag(ratingsEl, "average")[0]?.getAttribute("value")
+    ? allByTag(ratingsEl, "average")[0]?.getAttribute("value")
     : "0";
   const avgWeight = ratingsEl
-    ? getAllByTag(ratingsEl, "averageweight")[0]?.getAttribute("value")
+    ? allByTag(ratingsEl, "averageweight")[0]?.getAttribute("value")
     : "0";
-
-  const thumbnail = getElementText(item, "thumbnail");
-  const image = getElementText(item, "image");
 
   return {
     id: item.getAttribute("id") ?? "",
-    name: primaryName?.getAttribute("value") ?? nameEls[0]?.getAttribute("value") ?? "",
-    thumbnail: thumbnail.startsWith("//") ? `https:${thumbnail}` : thumbnail,
-    image: image.startsWith("//") ? `https:${image}` : image,
-    minPlayers: parseInt(getAllByTag(item, "minplayers")[0]?.getAttribute("value") ?? "0"),
-    maxPlayers: parseInt(getAllByTag(item, "maxplayers")[0]?.getAttribute("value") ?? "0"),
-    minPlaytime: parseInt(getAllByTag(item, "minplaytime")[0]?.getAttribute("value") ?? "0"),
-    maxPlaytime: parseInt(getAllByTag(item, "maxplaytime")[0]?.getAttribute("value") ?? "0"),
-    minAge: parseInt(getAllByTag(item, "minage")[0]?.getAttribute("value") ?? "0"),
-    yearPublished: parseInt(getAllByTag(item, "yearpublished")[0]?.getAttribute("value") ?? "0"),
+    name:
+      primaryName?.getAttribute("value") ??
+      nameEls[0]?.getAttribute("value") ??
+      "",
+    thumbnail: fixUrl(tagText(item, "thumbnail")),
+    image: fixUrl(tagText(item, "image")),
+    minPlayers: parseInt(
+      allByTag(item, "minplayers")[0]?.getAttribute("value") ?? "0"
+    ),
+    maxPlayers: parseInt(
+      allByTag(item, "maxplayers")[0]?.getAttribute("value") ?? "0"
+    ),
+    minPlaytime: parseInt(
+      allByTag(item, "minplaytime")[0]?.getAttribute("value") ?? "0"
+    ),
+    maxPlaytime: parseInt(
+      allByTag(item, "maxplaytime")[0]?.getAttribute("value") ?? "0"
+    ),
+    minAge: parseInt(
+      allByTag(item, "minage")[0]?.getAttribute("value") ?? "0"
+    ),
+    yearPublished: parseInt(
+      allByTag(item, "yearpublished")[0]?.getAttribute("value") ?? "0"
+    ),
     rating: parseFloat(avgRating ?? "0"),
     weight: parseFloat(avgWeight ?? "0"),
     categories,
     mechanics,
-    description: getElementText(item, "description"),
+    description: tagText(item, "description"),
   };
 }

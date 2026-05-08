@@ -52,12 +52,21 @@ export type RuleCategory =
   | "components"
   | "other";
 
+export type AIProvider = "anthropic" | "openrouter";
+
+export interface AIConfig {
+  provider: AIProvider;
+  apiKey: string;
+  model?: string; // optional custom model for OpenRouter
+}
+
 export interface UserProfile {
   id: string;
   email?: string;
   bggUsername?: string;
   bggConnected: boolean;
-  hasAnthropicKey?: boolean;
+  aiProvider?: AIProvider;
+  hasAIKey?: boolean;
 }
 
 export interface GameFilters {

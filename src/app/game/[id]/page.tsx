@@ -27,9 +27,18 @@ export default function GamePage({ params }: { params: Promise<{ id: string }> }
       let ug = games.find((g) => g.bggId === id) ?? null;
 
       if (!ug) {
-        // Fetch from BGG and save locally
+        // Try client-side BGG XML API first, fall back to server proxy
         try {
-          const game = await bggFetchGame(id);
+          let game;
+          try {
+            game = await bggFetchGame(id);
+          } catch {
+            // Server-side proxy fallback (uses api.geekdo.com, not blocked)
+            const res = await fetch(`/api/bgg/game?id=${id}`);
+            if (!res.ok) throw new Error("Game not found");
+            const data = await res.json();
+            game = data.game;
+          }
           ug = saveUserGame(game);
         } catch {
           setLoading(false);
