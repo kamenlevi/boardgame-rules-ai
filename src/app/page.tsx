@@ -1,65 +1,137 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
+import { Header } from "@/components/layout/Header";
+import { GameCard } from "@/components/games/GameCard";
+import { GameFiltersBar } from "@/components/games/GameFilters";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { getUserGames, getProfile } from "@/lib/store";
+import { UserGame, GameFilters, LibraryTab } from "@/types";
+import { BookOpen, Star, Upload, Library } from "lucide-react";
 
 export default function Home() {
+  const [games, setGames] = useState<UserGame[]>([]);
+  const [filters, setFilters] = useState<GameFilters>({});
+  const [search, setSearch] = useState("");
+  const [tab, setTab] = useState<LibraryTab>("all");
+
+  function refresh() {
+    setGames(getUserGames());
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const filtered = useMemo(() => {
+    let list = games;
+
+    if (tab === "my-collection") list = list.filter((g) => g.bggOwned);
+    if (tab === "my-uploads") list = list.filter((g) => g.hasUploadedRulebook);
+    if (tab === "favorites") list = list.filter((g) => g.isFavorite);
+
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter((g) => g.game.name.toLowerCase().includes(q));
+    }
+
+    if (filters.minPlayers) {
+      list = list.filter((g) => g.game.maxPlayers >= filters.minPlayers!);
+    }
+    if (filters.maxPlaytime) {
+      list = list.filter(
+        (g) => !g.game.minPlaytime || g.game.minPlaytime <= filters.maxPlaytime!
+      );
+    }
+    if (filters.maxWeight) {
+      list = list.filter(
+        (g) => !g.game.weight || g.game.weight <= filters.maxWeight!
+      );
+    }
+
+    return list;
+  }, [games, tab, search, filters]);
+
+  const profile = getProfile();
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+    <div className="min-h-screen bg-background">
+      <Header onSearch={setSearch} onCollectionImported={refresh} />
+
+      <main className="container mx-auto px-4 py-6">
+        <Tabs value={tab} onValueChange={(v: string) => setTab(v as LibraryTab)}>
+          <div className="flex flex-col sm:flex-row gap-4 mb-6">
+            <TabsList className="w-full sm:w-auto">
+              <TabsTrigger value="all" className="gap-1.5">
+                <Library className="h-3.5 w-3.5" />
+                All Games
+              </TabsTrigger>
+              <TabsTrigger value="my-collection" className="gap-1.5">
+                <BookOpen className="h-3.5 w-3.5" />
+                My BGG
+              </TabsTrigger>
+              <TabsTrigger value="my-uploads" className="gap-1.5">
+                <Upload className="h-3.5 w-3.5" />
+                My Uploads
+              </TabsTrigger>
+              <TabsTrigger value="favorites" className="gap-1.5">
+                <Star className="h-3.5 w-3.5" />
+                Favorites
+              </TabsTrigger>
+            </TabsList>
+
+            <div className="sm:ml-auto">
+              <GameFiltersBar filters={filters} onChange={setFilters} />
+            </div>
+          </div>
+
+          {(["all", "my-collection", "my-uploads", "favorites"] as LibraryTab[]).map((t) => (
+            <TabsContent key={t} value={t}>
+              {filtered.length === 0 ? (
+                <EmptyState tab={t} bggConnected={profile.bggConnected} />
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                  {filtered.map((ug) => (
+                    <GameCard key={ug.id} userGame={ug} onFavoriteToggle={refresh} />
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+          ))}
+        </Tabs>
       </main>
+    </div>
+  );
+}
+
+function EmptyState({ tab, bggConnected }: { tab: LibraryTab; bggConnected: boolean }) {
+  const messages: Record<LibraryTab, { title: string; desc: string }> = {
+    all: {
+      title: "No games yet",
+      desc: bggConnected
+        ? "Your BGG games will appear here."
+        : "Connect your BGG account (Settings ⚙️) to get started.",
+    },
+    "my-collection": {
+      title: "No BGG games",
+      desc: "Connect your BGG account in Settings to sync your collection.",
+    },
+    "my-uploads": {
+      title: "No uploaded rulebooks",
+      desc: "Open a game and upload rulebook pages to extract rules.",
+    },
+    favorites: {
+      title: "No favorites yet",
+      desc: "Click the heart on any game card to add it to your favorites.",
+    },
+  };
+
+  const { title, desc } = messages[tab];
+  return (
+    <div className="text-center py-24 text-muted-foreground">
+      <BookOpen className="h-12 w-12 mx-auto mb-4 opacity-30" />
+      <p className="font-medium text-foreground">{title}</p>
+      <p className="text-sm mt-1">{desc}</p>
     </div>
   );
 }
