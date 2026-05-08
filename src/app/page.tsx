@@ -56,7 +56,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header onSearch={setSearch} onCollectionImported={refresh} />
+      <Header onSearch={setSearch} onLibraryChanged={refresh} />
 
       <main className="container mx-auto px-4 py-6">
         <Tabs value={tab} onValueChange={(v: string) => setTab(v as LibraryTab)}>

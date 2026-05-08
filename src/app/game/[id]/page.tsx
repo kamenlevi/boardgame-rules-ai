@@ -12,7 +12,7 @@ import { RulesList } from "@/components/rules/RulesList";
 import { RulesQA } from "@/components/rules/RulesQA";
 import { getUserGames, saveUserGame, toggleFavorite, saveExtractedRules } from "@/lib/store";
 import { UserGame, Rule } from "@/types";
-import { fetchBGGGame } from "@/lib/bgg";
+import { bggFetchGame } from "@/lib/bgg-client";
 import { cn } from "@/lib/utils";
 
 export default function GamePage({ params }: { params: Promise<{ id: string }> }) {
@@ -29,7 +29,7 @@ export default function GamePage({ params }: { params: Promise<{ id: string }> }
       if (!ug) {
         // Fetch from BGG and save locally
         try {
-          const game = await fetchBGGGame(id);
+          const game = await bggFetchGame(id);
           ug = saveUserGame(game);
         } catch {
           setLoading(false);

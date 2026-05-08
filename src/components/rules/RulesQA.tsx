@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Rule } from "@/types";
 import { toast } from "sonner";
+import { getAnthropicKey } from "@/lib/store";
 
 interface Message {
   role: "user" | "assistant";
@@ -30,9 +31,13 @@ export function RulesQA({ rules, gameName }: RulesQAProps) {
     setLoading(true);
 
     try {
+      const key = getAnthropicKey();
       const res = await fetch("/api/rules/ask", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(key ? { "x-anthropic-key": key } : {}),
+        },
         body: JSON.stringify({ question, rules, gameName }),
       });
       const data = await res.json();

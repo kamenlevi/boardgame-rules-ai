@@ -6,6 +6,7 @@ import { Upload, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Rule } from "@/types";
 import { toast } from "sonner";
+import { getAnthropicKey } from "@/lib/store";
 import Image from "next/image";
 
 interface RulesUploaderProps {
@@ -41,9 +42,13 @@ export function RulesUploader({ gameName, onRulesExtracted }: RulesUploaderProps
     if (!images.length) return;
     setExtracting(true);
     try {
+      const key = getAnthropicKey();
       const res = await fetch("/api/rules/extract", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(key ? { "x-anthropic-key": key } : {}),
+        },
         body: JSON.stringify({ imageDataUrls: images, gameName }),
       });
       const data = await res.json();

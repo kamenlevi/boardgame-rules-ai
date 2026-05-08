@@ -57,6 +57,7 @@ export interface UserProfile {
   email?: string;
   bggUsername?: string;
   bggConnected: boolean;
+  hasAnthropicKey?: boolean;
 }
 
 export interface GameFilters {

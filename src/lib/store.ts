@@ -4,7 +4,7 @@ import { UserGame, BGGGame, Rule, UploadedPage, UserProfile } from "@/types";
 const KEYS = {
   profile: "bga_profile",
   games: "bga_games",
-  favorites: "bga_favorites",
+  anthropicKey: "bga_anthropic_key",
 };
 
 export function getProfile(): UserProfile {
@@ -71,6 +71,15 @@ export function saveExtractedRules(bggId: string, rules: Rule[]) {
   if (idx === -1) return;
   games[idx].extractedRules = rules;
   localStorage.setItem(KEYS.games, JSON.stringify(games));
+}
+
+export function getAnthropicKey(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(KEYS.anthropicKey) ?? "";
+}
+
+export function saveAnthropicKey(key: string) {
+  localStorage.setItem(KEYS.anthropicKey, key);
 }
 
 export function importBGGCollection(bggGames: BGGGame[]) {
