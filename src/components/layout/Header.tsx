@@ -33,7 +33,9 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
 
   // BGG state
   const [bggUsername, setBggUsername] = useState("");
+  const [bggPassword, setBggPassword] = useState("");
   const [importing, setImporting] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
   const [bggError, setBggError] = useState("");
 
   // AI key state
@@ -63,12 +65,44 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
     }
   }, [settingsOpen]);
 
-  async function connectBGG() {
+  async function loginBGG() {
+    if (!bggUsername.trim() || !bggPassword.trim()) return;
+    setBggError("");
+    setLoggingIn(true);
+    try {
+      const res = await fetch("/api/bgg/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: bggUsername.trim(), password: bggPassword.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      const updated = saveProfile({
+        bggUsername: bggUsername.trim(),
+        bggLoggedIn: true,
+        bggCookies: data.bggCookies,
+      });
+      setProfile(updated);
+      setBggPassword("");
+      toast.success("Logged in to BGG");
+      await connectBGG(data.bggCookies);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Login failed";
+      setBggError(msg);
+    } finally {
+      setLoggingIn(false);
+    }
+  }
+
+  async function connectBGG(cookies?: string) {
     if (!bggUsername.trim()) return;
     setBggError("");
     setImporting(true);
     try {
-      const games = await bggFetchCollection(bggUsername.trim());
+      const p = getProfile();
+      const bggCookies = cookies ?? p.bggCookies;
+      const games = await bggFetchCollection(bggUsername.trim(), bggCookies);
       const { importBGGCollection } = await import("@/lib/store");
       importBGGCollection(games);
       const updated = saveProfile({ bggUsername: bggUsername.trim(), bggConnected: true });
@@ -187,21 +221,42 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
             {/* BGG Tab */}
             <TabsContent value="bgg" className="space-y-3 mt-4">
               <p className="text-sm text-muted-foreground">
-                Enter your BoardGameGeek username to import your owned collection.
+                Log in with your BGG account to import your collection (including private collections).
               </p>
+              <Input
+                placeholder="BGG username"
+                value={bggUsername}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  setBggUsername(e.target.value);
+                  setBggError("");
+                }}
+                disabled={importing || loggingIn}
+              />
+              <Input
+                type="password"
+                placeholder="BGG password"
+                value={bggPassword}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  setBggPassword(e.target.value);
+                  setBggError("");
+                }}
+                onKeyDown={(e: React.KeyboardEvent) => e.key === "Enter" && loginBGG()}
+                disabled={importing || loggingIn}
+              />
               <div className="flex gap-2">
-                <Input
-                  placeholder="BGG username"
-                  value={bggUsername}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                    setBggUsername(e.target.value);
-                    setBggError("");
-                  }}
-                  onKeyDown={(e: React.KeyboardEvent) => e.key === "Enter" && connectBGG()}
-                  disabled={importing}
-                />
-                <Button onClick={connectBGG} disabled={importing || !bggUsername.trim()}>
-                  {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : profile.bggConnected ? "Re-sync" : "Connect"}
+                <Button
+                  onClick={loginBGG}
+                  disabled={loggingIn || importing || !bggUsername.trim() || !bggPassword.trim()}
+                  className="flex-1"
+                >
+                  {loggingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : "Log in & Import"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => connectBGG()}
+                  disabled={importing || loggingIn || !bggUsername.trim()}
+                >
+                  {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : profile.bggConnected ? "Re-sync" : "Public only"}
                 </Button>
               </div>
 
@@ -212,15 +267,19 @@ export function Header({ onSearch, onLibraryChanged }: HeaderProps) {
                 </div>
               )}
 
-              {!bggError && profile.bggConnected && (
+              {!bggError && profile.bggLoggedIn && (
                 <p className="text-xs text-green-600">
-                  ✓ Connected as <strong>{profile.bggUsername}</strong>
+                  ✓ Logged in as <strong>{profile.bggUsername}</strong>
+                </p>
+              )}
+              {!bggError && !profile.bggLoggedIn && profile.bggConnected && (
+                <p className="text-xs text-green-600">
+                  ✓ Connected as <strong>{profile.bggUsername}</strong> (public collection only)
                 </p>
               )}
 
-              <div className="text-xs text-muted-foreground space-y-1 pt-1 border-t">
-                <p className="font-medium">Collection must be public:</p>
-                <p>BGG Profile → Settings → Privacy → Collection → Everyone</p>
+              <div className="text-xs text-muted-foreground pt-1 border-t">
+                <p>Log in to access private collections. Or use &quot;Public only&quot; if your collection is public.</p>
               </div>
             </TabsContent>
 

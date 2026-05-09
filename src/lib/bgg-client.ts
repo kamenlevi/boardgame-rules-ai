@@ -72,14 +72,47 @@ export class BGGAuthError extends Error {
   }
 }
 
-export async function bggFetchCollection(username: string): Promise<BGGGame[]> {
+export async function bggFetchCollection(username: string, bggCookies?: string): Promise<BGGGame[]> {
+  if (bggCookies) {
+    return bggFetchCollectionAuthenticated(username, bggCookies);
+  }
+
   const url = `${BGG_XML}/collection?username=${encodeURIComponent(username)}&own=1&stats=1&excludesubtype=boardgameexpansion`;
   const doc = await bggFetch(url);
 
   const items = allByTag(doc, "item");
   if (!items.length) return [];
 
-  // Batch fetch full game details (stats, weight, etc.) for all collected games
+  const ids = items
+    .map((i) => i.getAttribute("objectid"))
+    .filter(Boolean)
+    .join(",");
+
+  return bggFetchByIds(ids);
+}
+
+async function bggFetchCollectionAuthenticated(username: string, bggCookies: string): Promise<BGGGame[]> {
+  const res = await fetch(
+    `/api/bgg/collection?username=${encodeURIComponent(username)}`,
+    { headers: { "x-bgg-cookies": bggCookies } }
+  );
+
+  if (res.status === 401) {
+    throw new BGGAuthError(
+      "BGG session expired. Please log in again with your BGG password."
+    );
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ error: "Collection fetch failed" }));
+    throw new Error(data.error ?? "Failed to fetch collection");
+  }
+
+  const data = await res.json();
+  const doc = parseXML(data.xml);
+
+  const items = allByTag(doc, "item");
+  if (!items.length) return [];
+
   const ids = items
     .map((i) => i.getAttribute("objectid"))
     .filter(Boolean)

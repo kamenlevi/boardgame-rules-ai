@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RulesUploader } from "@/components/rules/RulesUploader";
 import { RulesList } from "@/components/rules/RulesList";
 import { RulesQA } from "@/components/rules/RulesQA";
+import { BGGRulebooks } from "@/components/rules/BGGRulebooks";
 import { getUserGames, saveUserGame, toggleFavorite, saveExtractedRules } from "@/lib/store";
 import { UserGame, Rule } from "@/types";
 import { bggFetchGame } from "@/lib/bgg-client";
@@ -188,6 +189,11 @@ export default function GamePage({ params }: { params: Promise<{ id: string }> }
                     and extract all rules precisely.
                   </p>
                   <RulesUploader gameName={game.name} onRulesExtracted={handleRulesExtracted} />
+
+                  <div className="mt-6 pt-6 border-t">
+                    <h3 className="text-sm font-medium mb-2">BGG Rulebooks</h3>
+                    <BGGRulebooks gameId={game.id} />
+                  </div>
                 </div>
               </TabsContent>
 

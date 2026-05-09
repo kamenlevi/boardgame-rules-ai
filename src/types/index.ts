@@ -65,6 +65,8 @@ export interface UserProfile {
   email?: string;
   bggUsername?: string;
   bggConnected: boolean;
+  bggLoggedIn?: boolean;
+  bggCookies?: string;
   aiProvider?: AIProvider;
   hasAIKey?: boolean;
 }
